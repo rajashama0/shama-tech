@@ -1,0 +1,23 @@
+<VirtualHost *:80>
+    ServerName shama-tech.com
+    ServerAlias www.shama-tech.com
+
+    DocumentRoot /var/www/shama-tech-backend
+
+    ScriptAlias /cgi-bin/ /var/www/shama-tech-backend/server/cgi-bin/
+
+    <Directory "/var/www/shama-tech-backend/server/cgi-bin">
+        Options +ExecCGI
+        AddHandler cgi-script .py .cgi
+        Require all granted
+    </Directory>
+
+    <Directory "/var/www/shama-tech-backend">
+        Options -Indexes +FollowSymLinks
+        AllowOverride None
+        Require all granted
+    </Directory>
+
+    ErrorLog ${APACHE_LOG_DIR}/shama-tech-backend-error.log
+    CustomLog ${APACHE_LOG_DIR}/shama-tech-backend-access.log combined
+</VirtualHost>

@@ -1,0 +1,106 @@
+Backend API contract for the separate frontend AI project
+
+Do not create another backend.
+Do not create another database.
+Do not use frontend storage as backend storage.
+Do not implement auth outside this backend.
+Use the existing Apache CGI backend.
+
+All calls are POST requests to:
+
+/cgi-bin/api?meth=METHOD_NAME
+
+Standard request body:
+
+{
+  "info": {
+    "ses": "",
+    "uses": "",
+    "os": "lovable"
+  },
+  "input": {}
+}
+
+Public methods:
+
+- api_health
+- api_services
+- api_case_studies
+- api_case_study_get
+- api_contact_add
+
+Admin methods:
+
+- api_admin_contact_list
+- api_admin_contact_status
+- api_admin_case_add
+- api_admin_case_update
+- api_admin_case_delete
+
+Admin calls require this request header:
+
+X-Admin-Token: value-from-server-env
+
+Success shape:
+
+{
+  "server": {
+    "method": "api_services",
+    "allow": 1,
+    "success": true,
+    "data": [],
+    "server_ver": "shama-tech.1"
+  }
+}
+
+Error shape:
+
+{
+  "server": {
+    "method": "api_contact_add",
+    "allow": 0,
+    "success": false,
+    "error": {
+      "code": "validation_error",
+      "message": "email is invalid",
+      "field": "email"
+    },
+    "server_ver": "shama-tech.1"
+  }
+}
+
+Minimal API-call example for contract documentation:
+
+async function call_backend(meth, inp) {
+  var response = await fetch("/cgi-bin/api?meth=" + meth, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      info: {ses: "", uses: "", os: "lovable"},
+      input: inp
+    })
+  });
+  return await response.json();
+}
+
+Contact submit input:
+
+{
+  "full_name": "Jane Lead",
+  "company_name": "",
+  "email": "jane@example.com",
+  "phone": "",
+  "service_interest": "AI workflow automation",
+  "budget_range": "Not sure yet",
+  "message": "I want to automate our intake process.",
+  "source_page": "/contact"
+}
+
+Required contact fields:
+
+- full_name
+- email
+- service_interest
+- message
+
+company_name is optional.

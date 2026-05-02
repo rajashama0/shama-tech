@@ -1,8 +1,8 @@
 # Shama Tech Backend
 
-Server-only Python backend for the Shama Tech website.
+Python backend for the Shama Tech website, with a production script that can also build and deploy a separate static frontend project when it is present.
 
-This backend uses Apache CGI, Python, and MySQL. It does not use Flask, FastAPI, React, a frontend app, Lovable backend, Lovable storage, or Lovable auth.
+This backend uses Apache CGI, Python, and MySQL. It does not use Flask, FastAPI, Lovable backend, Lovable storage, or Lovable auth.
 
 ## Architecture
 
@@ -34,6 +34,7 @@ server/
       db_*.py
 deploy/
   install_ec2.sh
+  promote_to_prod.sh
   apache-shama-tech.conf.example
 scripts/
   test_local_cgi.sh
@@ -222,7 +223,40 @@ curl -X POST "http://localhost/cgi-bin/api?meth=api_admin_contact_status" \
 
 ## EC2 Deployment
 
-Run from the repository root on Ubuntu EC2:
+For the full production promotion flow, run from the repository root on Ubuntu EC2:
+
+```bash
+sudo bash deploy/promote_to_prod.sh
+```
+
+The production script:
+
+- Installs Apache, MySQL, Python, Certbot, and backend dependencies.
+- Tests the backend.
+- Auto-detects a frontend project when one exists in `./frontend`, `./client`, `./web`, `./app`, `../shama-tech-frontend`, or `../frontend`.
+- Installs frontend dependencies, runs its production build, and uploads the static output to `/var/www/shama-tech-frontend`.
+- Copies the backend to `/var/www/shama-tech-backend`.
+- Configures Apache so `/` serves the frontend and `/cgi-bin/` serves the backend API.
+- Imports the database schema, runs backend smoke tests, installs SSL, and tests HTTPS.
+
+Useful production options:
+
+```bash
+sudo FRONTEND_DIR=/root/shama-tech-frontend bash deploy/promote_to_prod.sh
+sudo FRONTEND_BUILD_DIR=dist bash deploy/promote_to_prod.sh
+sudo DEPLOY_FRONTEND=0 bash deploy/promote_to_prod.sh
+sudo ENABLE_SSL=0 bash deploy/promote_to_prod.sh
+```
+
+If the frontend uses a normal static build output, the script detects `dist/`, `build/`, or `out/` automatically. During the build it exports these common API variables with the same default value, `/cgi-bin/api`:
+
+```env
+VITE_API_BASE_URL=/cgi-bin/api
+REACT_APP_API_BASE_URL=/cgi-bin/api
+NEXT_PUBLIC_API_BASE_URL=/cgi-bin/api
+```
+
+The older backend-only installer is still available:
 
 ```bash
 bash deploy/install_ec2.sh
@@ -284,7 +318,7 @@ Domain health check:
 BASE_URL=https://shama-tech.com bash scripts/test_ec2_health.sh
 ```
 
-## Separate Frontend Contract
+## Frontend Contract
 
 The separate frontend project only needs the API contract. See:
 
@@ -292,4 +326,4 @@ The separate frontend project only needs the API contract. See:
 lovable_ai_info.txt
 ```
 
-That file documents how the separate frontend should call this backend. It is not frontend implementation.
+That file documents how the separate frontend should call this backend. It is not frontend implementation. For same-domain production hosting, the frontend should call `/cgi-bin/api?meth=METHOD_NAME`.

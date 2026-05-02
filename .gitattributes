@@ -1,0 +1,3 @@
+*.sh text eol=lf
+server/cgi-bin/api text eol=lf
+server/cgi-bin/p text eol=lf

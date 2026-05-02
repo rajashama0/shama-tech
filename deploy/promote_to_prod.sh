@@ -2,20 +2,21 @@
 set -Eeuo pipefail
 
 # ============================================================
-# Shama-Tech Backend: Dev-to-Prod Promotion Script
+# Shama-Tech: Dev-to-Prod Promotion Script
 # ============================================================
 #
 # What it does:
 # 1. Tests backend in the current/dev folder
-# 2. Copies backend to production path
-# 3. Creates/updates production .env safely
-# 4. Installs system dependencies
-# 5. Creates production Python venv
-# 6. Configures MySQL database/user/schema
-# 7. Configures Apache CGI
-# 8. Tests health/services/contact/admin endpoints
-# 9. Installs SSL automatically with Certbot
-# 10. Tests HTTPS health endpoint
+# 2. Auto-detects, installs, builds, and deploys frontend when present
+# 3. Copies backend to production path
+# 4. Creates/updates production .env safely
+# 5. Installs system dependencies
+# 6. Creates production Python venv
+# 7. Configures MySQL database/user/schema
+# 8. Configures Apache for frontend root + backend CGI
+# 9. Tests frontend/backend endpoints
+# 10. Installs SSL automatically with Certbot
+# 11. Tests HTTPS health endpoint
 #
 # SSL is enabled by default.
 #
@@ -32,6 +33,14 @@ set -Eeuo pipefail
 #   sudo DOMAIN=shama-tech.com bash deploy/promote_to_prod.sh
 #   sudo DEV_DIR=/root/shama-tech PROD_DIR=/var/www/shama-tech-backend DOMAIN=shama-tech.com bash deploy/promote_to_prod.sh
 #
+# Frontend options:
+#   Frontend is auto-detected in ./frontend, ./client, ./web, ./app,
+#   ../shama-tech-frontend, or ../frontend when a package.json exists.
+#
+#   sudo FRONTEND_DIR=/root/shama-tech-frontend bash deploy/promote_to_prod.sh
+#   sudo FRONTEND_BUILD_DIR=dist bash deploy/promote_to_prod.sh
+#   sudo DEPLOY_FRONTEND=0 bash deploy/promote_to_prod.sh
+#
 # Emergency/debug only, skip SSL:
 #   sudo ENABLE_SSL=0 bash deploy/promote_to_prod.sh
 #
@@ -39,6 +48,16 @@ set -Eeuo pipefail
 
 DEV_DIR="${DEV_DIR:-$(pwd)}"
 PROD_DIR="${PROD_DIR:-/var/www/shama-tech-backend}"
+
+DEPLOY_FRONTEND="${DEPLOY_FRONTEND:-auto}"
+FRONTEND_DIR="${FRONTEND_DIR:-}"
+FRONTEND_PROD_DIR="${FRONTEND_PROD_DIR:-/var/www/shama-tech-frontend}"
+FRONTEND_BUILD_DIR="${FRONTEND_BUILD_DIR:-}"
+FRONTEND_INSTALL_COMMAND="${FRONTEND_INSTALL_COMMAND:-}"
+FRONTEND_BUILD_COMMAND="${FRONTEND_BUILD_COMMAND:-}"
+FRONTEND_API_BASE="${FRONTEND_API_BASE:-/cgi-bin/api}"
+NODE_MAJOR="${NODE_MAJOR:-20}"
+NODE_MIN_MAJOR="${NODE_MIN_MAJOR:-18}"
 
 DOMAIN="${DOMAIN:-shama-tech.com}"
 WWW_DOMAIN="${WWW_DOMAIN:-www.${DOMAIN}}"
@@ -60,6 +79,9 @@ VENV_DIR="${PROD_DIR}/.venv"
 
 DB_PASSWORD=""
 ADMIN_API_KEY=""
+
+FRONTEND_ACTIVE=0
+FRONTEND_DIST_DIR=""
 
 log() {
   echo
@@ -86,6 +108,78 @@ show_logs_on_failure() {
   tail -n 100 /var/log/apache2/error.log 2>/dev/null || true
 }
 
+frontend_disabled() {
+  [[ "${DEPLOY_FRONTEND}" == "0" || "${DEPLOY_FRONTEND}" == "false" || "${DEPLOY_FRONTEND}" == "no" ]]
+}
+
+frontend_required() {
+  [[ "${DEPLOY_FRONTEND}" == "1" || "${DEPLOY_FRONTEND}" == "true" || "${DEPLOY_FRONTEND}" == "yes" ]]
+}
+
+resolve_dir() {
+  local dir="$1"
+
+  (cd "${dir}" >/dev/null 2>&1 && pwd)
+}
+
+detect_frontend_dir() {
+  local candidate
+
+  if [[ -n "${FRONTEND_DIR}" ]]; then
+    if [[ -f "${FRONTEND_DIR}/package.json" ]]; then
+      FRONTEND_DIR="$(resolve_dir "${FRONTEND_DIR}")"
+      return 0
+    fi
+
+    return 1
+  fi
+
+  local candidates=(
+    "${DEV_DIR}/frontend"
+    "${DEV_DIR}/client"
+    "${DEV_DIR}/web"
+    "${DEV_DIR}/app"
+    "${DEV_DIR}/../shama-tech-frontend"
+    "${DEV_DIR}/../frontend"
+    "${DEV_DIR}"
+  )
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "${candidate}/package.json" ]]; then
+      FRONTEND_DIR="$(resolve_dir "${candidate}")"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+configure_frontend_deployment() {
+  if frontend_disabled; then
+    FRONTEND_ACTIVE=0
+    echo "Frontend deployment disabled because DEPLOY_FRONTEND=${DEPLOY_FRONTEND}"
+    return
+  fi
+
+  if detect_frontend_dir; then
+    FRONTEND_ACTIVE=1
+
+    echo "Frontend project detected:"
+    echo "  FRONTEND_DIR=${FRONTEND_DIR}"
+    echo "  FRONTEND_PROD_DIR=${FRONTEND_PROD_DIR}"
+    echo "  FRONTEND_API_BASE=${FRONTEND_API_BASE}"
+    return
+  fi
+
+  FRONTEND_ACTIVE=0
+
+  if frontend_required; then
+    fail "DEPLOY_FRONTEND=${DEPLOY_FRONTEND}, but no frontend package.json was found. Set FRONTEND_DIR or place the frontend in ./frontend."
+  fi
+
+  echo "No frontend package.json found. Continuing with backend-only deployment."
+}
+
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     fail "Run this script with sudo/root: sudo bash deploy/promote_to_prod.sh"
@@ -107,6 +201,41 @@ check_dev_dir() {
   echo "PROD_DIR=${PROD_DIR}"
   echo "DOMAIN=${DOMAIN}"
   echo "WWW_DOMAIN=${WWW_DOMAIN}"
+
+  configure_frontend_deployment
+}
+
+install_node_runtime() {
+  if [[ "${FRONTEND_ACTIVE}" != "1" ]]; then
+    echo "No frontend deployment active. Skipping Node.js installation."
+    return
+  fi
+
+  log "Installing frontend build dependencies"
+
+  apt install -y ca-certificates gnupg build-essential
+
+  local installed_major="0"
+
+  if command -v node >/dev/null 2>&1; then
+    installed_major="$(node -p "Number.parseInt(process.versions.node.split('.')[0], 10)" 2>/dev/null || echo 0)"
+  fi
+
+  if (( installed_major < NODE_MIN_MAJOR )); then
+    echo "Node.js ${NODE_MIN_MAJOR}+ is required. Installing Node.js ${NODE_MAJOR}.x from NodeSource."
+    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" -o /tmp/shama_nodesource_setup.sh
+    bash /tmp/shama_nodesource_setup.sh
+    apt install -y nodejs
+    rm -f /tmp/shama_nodesource_setup.sh
+  else
+    echo "Existing Node.js version is new enough."
+  fi
+
+  command -v node >/dev/null 2>&1 || fail "Node.js is still unavailable after installation."
+  command -v npm >/dev/null 2>&1 || fail "npm is unavailable after Node.js installation."
+
+  echo "Node version: $(node --version)"
+  echo "npm version: $(npm --version)"
 }
 
 install_system_dependencies() {
@@ -138,6 +267,8 @@ install_system_dependencies() {
   systemctl enable apache2
   systemctl enable mysql
   systemctl start mysql
+
+  install_node_runtime
 }
 
 test_dev_code() {
@@ -172,6 +303,114 @@ PY
   deactivate
 }
 
+frontend_install_command() {
+  if [[ -n "${FRONTEND_INSTALL_COMMAND}" ]]; then
+    echo "${FRONTEND_INSTALL_COMMAND}"
+    return
+  fi
+
+  if [[ -f "${FRONTEND_DIR}/pnpm-lock.yaml" ]]; then
+    echo "corepack enable && pnpm install --frozen-lockfile"
+  elif [[ -f "${FRONTEND_DIR}/yarn.lock" ]]; then
+    echo "corepack enable && yarn install --frozen-lockfile"
+  elif [[ -f "${FRONTEND_DIR}/package-lock.json" ]]; then
+    echo "npm ci"
+  else
+    echo "npm install"
+  fi
+}
+
+frontend_build_command() {
+  if [[ -n "${FRONTEND_BUILD_COMMAND}" ]]; then
+    echo "${FRONTEND_BUILD_COMMAND}"
+    return
+  fi
+
+  if [[ -f "${FRONTEND_DIR}/pnpm-lock.yaml" ]]; then
+    echo "pnpm run build"
+  elif [[ -f "${FRONTEND_DIR}/yarn.lock" ]]; then
+    echo "yarn build"
+  else
+    echo "npm run build"
+  fi
+}
+
+detect_frontend_dist_dir() {
+  local candidate
+
+  if [[ -n "${FRONTEND_BUILD_DIR}" ]]; then
+    if [[ "${FRONTEND_BUILD_DIR}" == /* ]]; then
+      candidate="${FRONTEND_BUILD_DIR}"
+    else
+      candidate="${FRONTEND_DIR}/${FRONTEND_BUILD_DIR}"
+    fi
+
+    [[ -f "${candidate}/index.html" ]] || fail "FRONTEND_BUILD_DIR does not contain index.html: ${candidate}"
+
+    FRONTEND_DIST_DIR="${candidate}"
+    return
+  fi
+
+  for candidate in "${FRONTEND_DIR}/dist" "${FRONTEND_DIR}/build" "${FRONTEND_DIR}/out"; do
+    if [[ -f "${candidate}/index.html" ]]; then
+      FRONTEND_DIST_DIR="${candidate}"
+      return
+    fi
+  done
+
+  fail "Frontend build finished, but no index.html was found in dist/, build/, or out/. Set FRONTEND_BUILD_DIR if your app outputs elsewhere."
+}
+
+build_and_deploy_frontend() {
+  if [[ "${FRONTEND_ACTIVE}" != "1" ]]; then
+    echo "No frontend deployment active. Skipping frontend build/upload."
+    return
+  fi
+
+  log "Building frontend for production"
+
+  cd "${FRONTEND_DIR}"
+
+  export VITE_API_BASE_URL="${FRONTEND_API_BASE}"
+  export REACT_APP_API_BASE_URL="${FRONTEND_API_BASE}"
+  export NEXT_PUBLIC_API_BASE_URL="${FRONTEND_API_BASE}"
+
+  local install_command
+  local build_command
+
+  install_command="$(frontend_install_command)"
+  build_command="$(frontend_build_command)"
+
+  echo "Frontend directory: ${FRONTEND_DIR}"
+  echo "API base exported to common frontend env names: ${FRONTEND_API_BASE}"
+  echo "Installing frontend dependencies:"
+  echo "  ${install_command}"
+  bash -lc "${install_command}"
+
+  echo "Running frontend production build:"
+  echo "  ${build_command}"
+  bash -lc "${build_command}"
+
+  detect_frontend_dist_dir
+
+  echo "Frontend build output detected:"
+  echo "  ${FRONTEND_DIST_DIR}"
+
+  log "Uploading frontend build to production web root"
+
+  mkdir -p "${FRONTEND_PROD_DIR}"
+
+  rsync -a --delete \
+    "${FRONTEND_DIST_DIR}/" "${FRONTEND_PROD_DIR}/"
+
+  chown -R root:www-data "${FRONTEND_PROD_DIR}"
+  find "${FRONTEND_PROD_DIR}" -type d -exec chmod 755 {} +
+  find "${FRONTEND_PROD_DIR}" -type f -exec chmod 644 {} +
+
+  echo "Frontend upload complete:"
+  echo "  ${FRONTEND_PROD_DIR}"
+}
+
 backup_existing_prod_env() {
   if [[ -f "${ENV_FILE}" ]]; then
     BACKUP_FILE="${ENV_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
@@ -188,6 +427,25 @@ sync_to_prod() {
 
   backup_existing_prod_env
 
+  local frontend_excludes=()
+
+  if [[ "${FRONTEND_ACTIVE}" == "1" ]]; then
+    frontend_excludes+=(
+      --exclude "node_modules/"
+      --exclude ".next/"
+      --exclude ".nuxt/"
+      --exclude "dist/"
+      --exclude "build/"
+      --exclude "out/"
+    )
+
+    if [[ "${FRONTEND_DIR}" == "${DEV_DIR}/"* ]]; then
+      local frontend_relative_dir="${FRONTEND_DIR#${DEV_DIR}/}"
+      frontend_excludes+=(--exclude "${frontend_relative_dir}/")
+      echo "Excluding frontend source from backend sync: ${frontend_relative_dir}/"
+    fi
+  fi
+
   rsync -a --delete \
     --exclude ".git/" \
     --exclude ".venv/" \
@@ -195,6 +453,7 @@ sync_to_prod() {
     --exclude "*.pyc" \
     --exclude ".pytest_cache/" \
     --exclude "server/.env" \
+    "${frontend_excludes[@]}" \
     "${DEV_DIR}/" "${PROD_DIR}/"
 
   mkdir -p "${SERVER_DIR}"
@@ -338,12 +597,24 @@ SQL
 }
 
 configure_apache() {
-  log "Configuring Apache CGI site"
+  log "Configuring Apache frontend + CGI site"
 
   a2enmod cgi
   a2enmod ssl
   a2enmod rewrite
   a2enmod headers
+
+  local document_root="${PROD_DIR}"
+
+  if [[ "${FRONTEND_ACTIVE}" == "1" ]]; then
+    document_root="${FRONTEND_PROD_DIR}"
+    [[ -f "${document_root}/index.html" ]] || fail "Frontend index.html is missing from production web root: ${document_root}"
+  fi
+
+  echo "Apache document root:"
+  echo "  ${document_root}"
+  echo "Backend CGI path:"
+  echo "  ${SERVER_DIR}/cgi-bin/"
 
   cat > "${APACHE_CONF}" <<EOF
 <VirtualHost *:80>
@@ -352,7 +623,7 @@ configure_apache() {
 
     ServerAdmin webmaster@localhost
 
-    DocumentRoot ${PROD_DIR}
+    DocumentRoot ${document_root}
 
     ScriptAlias /cgi-bin/ ${SERVER_DIR}/cgi-bin/
 
@@ -362,11 +633,25 @@ configure_apache() {
         Require all granted
     </Directory>
 
-    <Directory "${PROD_DIR}">
+    <Directory "${document_root}">
         Options -Indexes +FollowSymLinks
         AllowOverride None
         Require all granted
     </Directory>
+EOF
+
+  if [[ "${FRONTEND_ACTIVE}" == "1" ]]; then
+    cat >> "${APACHE_CONF}" <<EOF
+
+    RewriteEngine On
+    RewriteCond %{REQUEST_URI} !^/cgi-bin/
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ /index.html [L]
+EOF
+  fi
+
+  cat >> "${APACHE_CONF}" <<EOF
 
     ErrorLog \${APACHE_LOG_DIR}/shama-tech-backend-error.log
     CustomLog \${APACHE_LOG_DIR}/shama-tech-backend-access.log combined
@@ -379,6 +664,39 @@ EOF
   apache2ctl configtest
   systemctl restart apache2
   systemctl status apache2 --no-pager || true
+}
+
+test_frontend_http() {
+  if [[ "${FRONTEND_ACTIVE}" != "1" ]]; then
+    echo "No frontend deployment active. Skipping frontend HTTP smoke test."
+    return
+  fi
+
+  log "Testing frontend over HTTP localhost"
+
+  curl -fsSL "http://localhost/" \
+    | tee /tmp/shama_frontend_home.html >/dev/null
+
+  grep -Eiq '<html|<!doctype html' /tmp/shama_frontend_home.html \
+    || fail "Frontend homepage did not look like HTML"
+
+  echo "Frontend homepage returned HTML from http://localhost/"
+}
+
+test_frontend_https() {
+  if [[ "${FRONTEND_ACTIVE}" != "1" ]]; then
+    return
+  fi
+
+  log "Testing HTTPS frontend homepage"
+
+  curl -fsSL "https://${DOMAIN}/" \
+    | tee /tmp/shama_https_frontend_home.html >/dev/null
+
+  grep -Eiq '<html|<!doctype html' /tmp/shama_https_frontend_home.html \
+    || fail "HTTPS frontend homepage did not look like HTML"
+
+  echo "Frontend homepage returned HTML from https://${DOMAIN}/"
 }
 
 test_apache_health() {
@@ -516,6 +834,8 @@ install_ssl() {
 
   grep -q '"success"[[:space:]]*:[[:space:]]*true' /tmp/shama_https_health_response.txt \
     || fail "HTTPS api_health did not return success=true"
+
+  test_frontend_https
 }
 
 print_final_summary() {
@@ -527,13 +847,25 @@ print_final_summary() {
   echo "Apache config:"
   echo "  ${APACHE_CONF}"
   echo
+  if [[ "${FRONTEND_ACTIVE}" == "1" ]]; then
+    echo "Frontend:"
+    echo "  Source: ${FRONTEND_DIR}"
+    echo "  Build output: ${FRONTEND_DIST_DIR}"
+    echo "  Web root: ${FRONTEND_PROD_DIR}"
+    echo "  URL: https://${DOMAIN}/"
+    echo
+  else
+    echo "Frontend:"
+    echo "  Not deployed by this run."
+    echo
+  fi
   echo "Local backend health:"
   echo "  http://localhost/cgi-bin/api?meth=api_health"
   echo
   echo "Domain backend health:"
   echo "  https://${DOMAIN}/cgi-bin/api?meth=api_health"
   echo
-  echo "Frontend/Lovable should call:"
+  echo "Frontend API endpoints:"
   echo "  https://${DOMAIN}/cgi-bin/api?meth=api_services"
   echo "  https://${DOMAIN}/cgi-bin/api?meth=api_case_studies"
   echo "  https://${DOMAIN}/cgi-bin/api?meth=api_case_study_get"
@@ -559,12 +891,14 @@ main() {
   check_dev_dir
   install_system_dependencies
   test_dev_code
+  build_and_deploy_frontend
   sync_to_prod
   create_or_update_env
   create_prod_venv
   patch_cgi_shebang
   configure_mysql
   configure_apache
+  test_frontend_http
   test_apache_health
   test_apache_services
   test_contact_insert

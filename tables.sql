@@ -7,6 +7,79 @@ CREATE DATABASE IF NOT EXISTS shama_tech
 
 USE shama_tech;
 
+-- Flyton base tables.
+-- DROP TABLE IF EXISTS logs;
+-- DROP TABLE IF EXISTS ses;
+-- DROP TABLE IF EXISTS users;
+-- DROP TABLE IF EXISTS gen;
+
+CREATE TABLE IF NOT EXISTS gen (
+    id int AUTO_INCREMENT,
+    name varchar(255) NOT NULL UNIQUE,
+    val1 varchar(255) DEFAULT NULL,
+    is_active tinyint DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    data json DEFAULT NULL,
+    PRIMARY KEY (id),
+    INDEX idx_gen_active_name (is_active, name)
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id int AUTO_INCREMENT,
+    name varchar(255) NOT NULL,
+    username varchar(255) DEFAULT NULL UNIQUE,
+    sis varchar(255) DEFAULT NULL,
+    is_active tinyint DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    data json DEFAULT NULL,
+    PRIMARY KEY (id),
+    INDEX idx_users_active_name (is_active, name)
+);
+
+CREATE TABLE IF NOT EXISTS ses (
+    id varchar(64) NOT NULL,
+    name varchar(255) DEFAULT NULL,
+    user_id int DEFAULT 0,
+    is_active tinyint DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    data json DEFAULT NULL,
+    PRIMARY KEY (id),
+    INDEX idx_ses_active_updated (is_active, updated_at),
+    INDEX idx_ses_user (user_id)
+);
+
+CREATE TABLE IF NOT EXISTS logs (
+    id int AUTO_INCREMENT,
+    name varchar(255) DEFAULT NULL,
+    act_type varchar(255) DEFAULT NULL,
+    send_text text DEFAULT NULL,
+    response text DEFAULT NULL,
+    is_active tinyint DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    data json DEFAULT NULL,
+    PRIMARY KEY (id),
+    INDEX idx_logs_active_created (is_active, created_at),
+    INDEX idx_logs_act_type (act_type)
+);
+
+INSERT INTO gen
+    (id, name, val1, is_active, data)
+VALUES
+    (101, 'gen_tab', '0', 1, '{"tab_type":"gen"}'),
+    (102, 'users_tab', '0', 1, '{"tab_type":"data"}'),
+    (103, 'ses_tab', '0', 1, '{"tab_type":"session"}'),
+    (104, 'logs_tab', '0', 1, '{"tab_type":"archive"}')
+ON DUPLICATE KEY UPDATE
+    val1 = VALUES(val1),
+    is_active = VALUES(is_active),
+    data = VALUES(data);
+
+-- Shama Tech business tables.
+
 CREATE TABLE IF NOT EXISTS services (
     id int AUTO_INCREMENT,
     name varchar(255) NOT NULL,

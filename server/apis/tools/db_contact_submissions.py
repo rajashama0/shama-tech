@@ -1,8 +1,8 @@
 import re
 import importlib.util
 import os
-import boto3
-from botocore.exceptions import ClientError
+
+from tools.sql import *
 
 
 CONTACT_STATUSES = ["new", "reviewed", "contacted", "closed", "spam"]
@@ -81,42 +81,14 @@ def contact_add(i):
     chk = contact_chk(i)
     if not chk["status"]:
         return chk
-    
-    # Send email using AWS SES
-    try:
-        ses_client = boto3.client('ses', region_name='eu-north-1')  # Stockholm region
-        subject = 'New Contact Form Submission'
-        body = f"""
-New contact form submission:
 
-Full Name: {chk['obj']['full_name']}
-Company Name: {chk['obj']['company_name']}
-Email: {chk['obj']['email']}
-Phone: {chk['obj']['phone']}
-Service Interest: {chk['obj']['service_interest']}
-Budget Range: {chk['obj']['budget_range']}
-Message: {chk['obj']['message']}
-Source Page: {chk['obj']['source_page']}
-"""
-        response = ses_client.send_email(
-            Source='contact@shama-tech.com',  # Sender email
-            Destination={
-                'ToAddresses': ['contact@shama-tech.com']
-            },
-            Message={
-                'Subject': {
-                    'Data': subject
-                },
-                'Body': {
-                    'Text': {
-                        'Data': body
-                    }
-                }
-            }
-        )
-        return {"status": 1, "id": response['MessageId']}
-    except ClientError as e:
-        return {"status": 0, "err": f"Email sending failed: {str(e)}"}
+    res = insert_to_sql({
+        "table": "contact_submissions",
+        "set": chk["obj"],
+    })
+    if not res["status"]:
+        return {"status": 0, "err": "contact submission save failed"}
+    return {"status": 1, "id": res["id"]}
 
 
 def contact_list():

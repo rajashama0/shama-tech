@@ -4,6 +4,28 @@ Python backend for the Shama Tech website, with a production script that can als
 
 This backend uses Apache CGI, Python, and MySQL. It does not use Flask, FastAPI, Lovable backend, Lovable storage, or Lovable auth.
 
+## Deploy To Production
+
+Run this from the repository root on the Ubuntu EC2 server:
+
+```bash
+cd /root/shama-tech
+sudo bash deploy/promote_to_prod.sh
+```
+
+That script is the full production flow. It tests the backend, builds/uploads the frontend when a frontend project is present, syncs the backend to `/var/www/shama-tech-backend`, creates or preserves production secrets, configures MySQL and Apache, runs smoke tests, installs SSL with Certbot, and prints errors/logs if anything fails.
+
+Useful options:
+
+```bash
+sudo FRONTEND_DIR=/root/shama-tech-frontend bash deploy/promote_to_prod.sh
+sudo FRONTEND_BUILD_DIR=dist bash deploy/promote_to_prod.sh
+sudo DEPLOY_FRONTEND=0 bash deploy/promote_to_prod.sh
+sudo ENABLE_SSL=0 bash deploy/promote_to_prod.sh
+```
+
+Before running live, make sure `shama-tech.com` and `www.shama-tech.com` point to the EC2 Elastic IP, and the AWS Security Group allows inbound ports `80` and `443`.
+
 ## Architecture
 
 ```text

@@ -7,6 +7,7 @@ root = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / "server" / "apis"))
 
 from tools.db_contact_submissions import contact_chk
+from tools import db_contact_submissions
 
 
 class ContactValidationTest(unittest.TestCase):
@@ -47,6 +48,25 @@ class ContactValidationTest(unittest.TestCase):
         res = contact_chk(data)
         self.assertEqual(res["status"], 0)
         self.assertEqual(res["field"], "message")
+
+    def test_contact_add_saves_to_database_helper(self):
+        calls = []
+        old_insert = db_contact_submissions.insert_to_sql
+
+        def fake_insert(r):
+            calls.append(r)
+            return {"status": True, "id": 123}
+
+        db_contact_submissions.insert_to_sql = fake_insert
+        try:
+            res = db_contact_submissions.contact_add(self.valid_input())
+        finally:
+            db_contact_submissions.insert_to_sql = old_insert
+
+        self.assertEqual(res, {"status": 1, "id": 123})
+        self.assertEqual(calls[0]["table"], "contact_submissions")
+        self.assertEqual(calls[0]["set"]["email"], "jane@example.com")
+        self.assertEqual(calls[0]["set"]["status"], "new")
 
 
 if __name__ == "__main__":

@@ -26,6 +26,26 @@ sudo ENABLE_SSL=0 bash deploy/promote_to_prod.sh
 
 Before running live, make sure `shama-tech.com` and `www.shama-tech.com` point to the EC2 Elastic IP, and the AWS Security Group allows inbound ports `80` and `443`.
 
+For two GitHub repositories, keep the frontend source clone separate from the frontend web root:
+
+```text
+/root/shama-tech              backend git clone
+/root/shama-tech-frontend     frontend git clone
+/var/www/shama-tech-frontend  generated frontend build only
+```
+
+To remember which GitHub repo each clone is connected to:
+
+```bash
+cd /root/shama-tech
+git remote -v
+
+cd /root/shama-tech-frontend
+git remote -v
+```
+
+Do not use `/var/www/shama-tech-frontend` as the frontend git clone when running the automated deploy script. That folder is the Apache web root for built static files.
+
 ## Architecture
 
 ```text

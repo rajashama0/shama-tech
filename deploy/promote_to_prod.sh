@@ -180,6 +180,28 @@ configure_frontend_deployment() {
   echo "No frontend package.json found. Continuing with backend-only deployment."
 }
 
+check_frontend_paths() {
+  if [[ "${FRONTEND_ACTIVE}" != "1" ]]; then
+    return
+  fi
+
+  mkdir -p "${FRONTEND_PROD_DIR}"
+
+  local frontend_source_abs
+  local frontend_prod_abs
+
+  frontend_source_abs="$(resolve_dir "${FRONTEND_DIR}")"
+  frontend_prod_abs="$(resolve_dir "${FRONTEND_PROD_DIR}")"
+
+  if [[ "${frontend_source_abs}" == "${frontend_prod_abs}" ]]; then
+    fail "FRONTEND_DIR and FRONTEND_PROD_DIR point to the same folder: ${frontend_source_abs}. Keep the frontend git clone somewhere like /root/shama-tech-frontend and let FRONTEND_PROD_DIR stay as /var/www/shama-tech-frontend."
+  fi
+
+  if [[ "${frontend_source_abs}" == "${frontend_prod_abs}/"* || "${frontend_prod_abs}" == "${frontend_source_abs}/"* ]]; then
+    fail "FRONTEND_DIR and FRONTEND_PROD_DIR must be separate folders. Source=${frontend_source_abs}, web root=${frontend_prod_abs}"
+  fi
+}
+
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     fail "Run this script with sudo/root: sudo bash deploy/promote_to_prod.sh"
@@ -203,6 +225,7 @@ check_dev_dir() {
   echo "WWW_DOMAIN=${WWW_DOMAIN}"
 
   configure_frontend_deployment
+  check_frontend_paths
 }
 
 install_node_runtime() {

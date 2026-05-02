@@ -1,6 +1,42 @@
 # Shama Tech Backend
 
-Python backend for the Shama Tech website, with a production script that can also build and deploy a separate static frontend project when it is present.
+## First Time Installation Commands
+
+1. Install Git on the EC2 server:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git
+```
+
+2. Clone the backend repo:
+
+```bash
+sudo git clone BACKEND_REPO_URL /root/shama-tech
+cd /root/shama-tech
+```
+
+3. Run the first full production install and let it clone/build the frontend too:
+
+```bash
+sudo FRONTEND_REPO_URL=FRONTEND_REPO_URL bash deploy/promote_to_prod.sh
+```
+
+## Deploying Commands
+
+1. Go to the backend repo on the EC2 server:
+
+```bash
+cd /root/shama-tech
+```
+
+2. Pull, build, and deploy backend + frontend together:
+
+```bash
+sudo bash deploy/promote_to_prod.sh
+```
+
+Python backend for the Shama Tech website, with a production script that pulls, builds, and deploys the backend and separate static frontend together on AWS.
 
 This backend uses Apache CGI, Python, and MySQL. It does not use Flask, FastAPI, Lovable backend, Lovable storage, or Lovable auth.
 
@@ -13,13 +49,15 @@ cd /root/shama-tech
 sudo bash deploy/promote_to_prod.sh
 ```
 
-That script is the full production flow. It tests the backend, builds/uploads the frontend when a frontend project is present, syncs the backend to `/var/www/shama-tech-backend`, creates or preserves production secrets, configures MySQL and Apache, runs smoke tests, installs SSL with Certbot, and prints errors/logs if anything fails.
+That script is the full production flow. It installs system dependencies, pulls the latest backend and frontend git clones, tests the backend, builds/uploads the frontend, syncs the backend to `/var/www/shama-tech-backend`, creates or preserves production secrets, configures MySQL and Apache, runs smoke tests, installs SSL with Certbot, and prints errors/logs if anything fails.
 
 Useful options:
 
 ```bash
 sudo FRONTEND_DIR=/root/shama-tech-frontend bash deploy/promote_to_prod.sh
+sudo FRONTEND_REPO_URL=git@github.com:ORG/REPO.git bash deploy/promote_to_prod.sh
 sudo FRONTEND_BUILD_DIR=dist bash deploy/promote_to_prod.sh
+sudo AUTO_UPDATE_SOURCE=0 bash deploy/promote_to_prod.sh
 sudo DEPLOY_FRONTEND=0 bash deploy/promote_to_prod.sh
 sudo ENABLE_SSL=0 bash deploy/promote_to_prod.sh
 ```
@@ -45,6 +83,8 @@ git remote -v
 ```
 
 Do not use `/var/www/shama-tech-frontend` as the frontend git clone when running the automated deploy script. That folder is the Apache web root for built static files.
+
+By default, `DEPLOY_FRONTEND=1`, so the deploy fails clearly if no frontend source is available. If `/root/shama-tech-frontend` already exists, the script pulls it. If it does not exist yet, pass `FRONTEND_REPO_URL` once so the script can clone it automatically.
 
 ## Architecture
 
@@ -274,8 +314,10 @@ sudo bash deploy/promote_to_prod.sh
 The production script:
 
 - Installs Apache, MySQL, Python, Certbot, and backend dependencies.
+- Pulls the latest backend git clone.
 - Tests the backend.
-- Auto-detects a frontend project when one exists in `./frontend`, `./client`, `./web`, `./app`, `../shama-tech-frontend`, or `../frontend`.
+- Requires a frontend by default and auto-detects it in `./frontend`, `./client`, `./web`, `./app`, `../shama-tech-frontend`, or `../frontend`.
+- Pulls the latest frontend git clone, or clones it when `FRONTEND_REPO_URL` is provided.
 - Installs frontend dependencies, runs its production build, and uploads the static output to `/var/www/shama-tech-frontend`.
 - Copies the backend to `/var/www/shama-tech-backend`.
 - Configures Apache so `/` serves the frontend and `/cgi-bin/` serves the backend API.
@@ -285,7 +327,9 @@ Useful production options:
 
 ```bash
 sudo FRONTEND_DIR=/root/shama-tech-frontend bash deploy/promote_to_prod.sh
+sudo FRONTEND_REPO_URL=git@github.com:ORG/REPO.git bash deploy/promote_to_prod.sh
 sudo FRONTEND_BUILD_DIR=dist bash deploy/promote_to_prod.sh
+sudo AUTO_UPDATE_SOURCE=0 bash deploy/promote_to_prod.sh
 sudo DEPLOY_FRONTEND=0 bash deploy/promote_to_prod.sh
 sudo ENABLE_SSL=0 bash deploy/promote_to_prod.sh
 ```

@@ -6,17 +6,18 @@ set -Eeuo pipefail
 # ============================================================
 #
 # What it does:
-# 1. Tests backend in the current/dev folder
-# 2. Auto-detects, installs, builds, and deploys frontend when present
-# 3. Copies backend to production path
-# 4. Creates/updates production .env safely
-# 5. Installs system dependencies
-# 6. Creates production Python venv
-# 7. Configures MySQL database/user/schema
-# 8. Configures Apache for frontend root + backend CGI
-# 9. Tests frontend/backend endpoints
-# 10. Installs SSL automatically with Certbot
-# 11. Tests HTTPS health endpoint
+# 1. Installs system dependencies
+# 2. Pulls the latest backend and frontend git sources
+# 3. Tests backend in the current/dev folder
+# 4. Installs, builds, and deploys the frontend
+# 5. Copies backend to production path
+# 6. Creates/updates production .env safely
+# 7. Creates production Python venv
+# 8. Configures MySQL database/user/schema
+# 9. Configures Apache for frontend root + backend CGI
+# 10. Tests frontend/backend endpoints
+# 11. Installs SSL automatically with Certbot
+# 12. Tests HTTPS health endpoint
 #
 # SSL is enabled by default.
 #
@@ -32,6 +33,11 @@ set -Eeuo pipefail
 # Optional:
 #   sudo DOMAIN=shama-tech.com bash deploy/promote_to_prod.sh
 #   sudo DEV_DIR=/root/shama-tech PROD_DIR=/var/www/shama-tech-backend DOMAIN=shama-tech.com bash deploy/promote_to_prod.sh
+#
+# Source update options:
+#   The backend and frontend git clones are pulled automatically by default.
+#   sudo AUTO_UPDATE_SOURCE=0 bash deploy/promote_to_prod.sh
+#   sudo FRONTEND_REPO_URL=git@github.com:ORG/REPO.git bash deploy/promote_to_prod.sh
 #
 # Frontend options:
 #   Frontend is auto-detected in ./frontend, ./client, ./web, ./app,
@@ -49,8 +55,11 @@ set -Eeuo pipefail
 DEV_DIR="${DEV_DIR:-$(pwd)}"
 PROD_DIR="${PROD_DIR:-/var/www/shama-tech-backend}"
 
-DEPLOY_FRONTEND="${DEPLOY_FRONTEND:-auto}"
+AUTO_UPDATE_SOURCE="${AUTO_UPDATE_SOURCE:-1}"
+
+DEPLOY_FRONTEND="${DEPLOY_FRONTEND:-1}"
 FRONTEND_DIR="${FRONTEND_DIR:-}"
+FRONTEND_REPO_URL="${FRONTEND_REPO_URL:-}"
 FRONTEND_PROD_DIR="${FRONTEND_PROD_DIR:-/var/www/shama-tech-frontend}"
 FRONTEND_BUILD_DIR="${FRONTEND_BUILD_DIR:-}"
 FRONTEND_INSTALL_COMMAND="${FRONTEND_INSTALL_COMMAND:-}"
@@ -114,6 +123,10 @@ frontend_disabled() {
 
 frontend_required() {
   [[ "${DEPLOY_FRONTEND}" == "1" || "${DEPLOY_FRONTEND}" == "true" || "${DEPLOY_FRONTEND}" == "yes" ]]
+}
+
+source_update_disabled() {
+  [[ "${AUTO_UPDATE_SOURCE}" == "0" || "${AUTO_UPDATE_SOURCE}" == "false" || "${AUTO_UPDATE_SOURCE}" == "no" ]]
 }
 
 resolve_dir() {
@@ -223,9 +236,87 @@ check_dev_dir() {
   echo "PROD_DIR=${PROD_DIR}"
   echo "DOMAIN=${DOMAIN}"
   echo "WWW_DOMAIN=${WWW_DOMAIN}"
+}
 
-  configure_frontend_deployment
-  check_frontend_paths
+update_git_worktree() {
+  local dir="$1"
+  local label="$2"
+
+  if ! git -C "${dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "${label} source is not a git worktree. Skipping automatic source update:"
+    echo "  ${dir}"
+    return
+  fi
+
+  if [[ -n "$(git -C "${dir}" status --porcelain)" ]]; then
+    fail "${label} source has uncommitted changes: ${dir}. Commit/stash them or run with AUTO_UPDATE_SOURCE=0."
+  fi
+
+  if ! git -C "${dir}" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+    fail "${label} source has no upstream branch configured: ${dir}. Set the branch upstream or run with AUTO_UPDATE_SOURCE=0."
+  fi
+
+  echo "Updating ${label} source:"
+  echo "  ${dir}"
+
+  git -C "${dir}" fetch --prune
+  git -C "${dir}" pull --ff-only --recurse-submodules
+  git -C "${dir}" submodule update --init --recursive
+
+  echo "${label} source is now at commit: $(git -C "${dir}" rev-parse --short HEAD)"
+}
+
+ensure_frontend_source_available() {
+  if frontend_disabled; then
+    return
+  fi
+
+  if detect_frontend_dir; then
+    return
+  fi
+
+  if [[ -z "${FRONTEND_REPO_URL}" ]]; then
+    if frontend_required; then
+      fail "DEPLOY_FRONTEND=${DEPLOY_FRONTEND}, but no frontend package.json was found. Set FRONTEND_DIR to an existing clone or FRONTEND_REPO_URL so the script can clone it."
+    fi
+
+    return
+  fi
+
+  local clone_dir
+  clone_dir="${FRONTEND_DIR:-${DEV_DIR}/../shama-tech-frontend}"
+
+  if [[ -e "${clone_dir}" ]]; then
+    fail "FRONTEND_REPO_URL was provided, but clone target already exists without a package.json: ${clone_dir}"
+  fi
+
+  echo "Cloning frontend source:"
+  echo "  ${FRONTEND_REPO_URL}"
+  echo "  ${clone_dir}"
+
+  mkdir -p "$(dirname "${clone_dir}")"
+  git clone "${FRONTEND_REPO_URL}" "${clone_dir}"
+
+  [[ -f "${clone_dir}/package.json" ]] || fail "Frontend clone finished, but package.json is missing: ${clone_dir}"
+
+  FRONTEND_DIR="$(resolve_dir "${clone_dir}")"
+}
+
+update_source_repositories() {
+  if source_update_disabled; then
+    echo "Automatic source update disabled because AUTO_UPDATE_SOURCE=${AUTO_UPDATE_SOURCE}"
+    return
+  fi
+
+  log "Updating backend and frontend source"
+
+  update_git_worktree "${DEV_DIR}" "Backend"
+
+  ensure_frontend_source_available
+
+  if [[ -n "${FRONTEND_DIR}" && -f "${FRONTEND_DIR}/package.json" ]]; then
+    update_git_worktree "${FRONTEND_DIR}" "Frontend"
+  fi
 }
 
 install_node_runtime() {
@@ -268,6 +359,7 @@ install_system_dependencies() {
 
   apt install -y \
     apache2 \
+    git \
     mysql-server \
     python3 \
     python3-pip \
@@ -291,7 +383,6 @@ install_system_dependencies() {
   systemctl enable mysql
   systemctl start mysql
 
-  install_node_runtime
 }
 
 test_dev_code() {
@@ -913,6 +1004,10 @@ main() {
   require_root
   check_dev_dir
   install_system_dependencies
+  update_source_repositories
+  configure_frontend_deployment
+  check_frontend_paths
+  install_node_runtime
   test_dev_code
   build_and_deploy_frontend
   sync_to_prod

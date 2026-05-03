@@ -9,14 +9,18 @@ env_path = server_dir / ".env"
 def load_env():
     if not env_path.exists():
         return
+
     with env_path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
+
             if line == "" or line.startswith("#") or "=" not in line:
                 continue
+
             k, v = line.split("=", 1)
             k = k.strip()
             v = v.strip().strip('"').strip("'")
+
             if k and k not in os.environ:
                 os.environ[k] = v
 
@@ -27,6 +31,7 @@ def env_str(name, default=""):
 
 def env_int(name, default):
     val = env_str(name, str(default))
+
     try:
         return int(val)
     except ValueError:
@@ -35,21 +40,27 @@ def env_int(name, default):
 
 def env_list(name, default=""):
     val = env_str(name, default)
+
     if val == "":
         return []
+
     return [x.strip() for x in val.split(",") if x.strip()]
 
 
 def resolve_root(value):
     if value == "":
         return str(server_dir.parent)
+
     p = Path(value)
+
     if p.is_absolute():
         return str(p)
+
     return str((server_dir.parent / p).resolve())
 
 
 load_env()
+
 
 SYS_MODE = env_str("SYS_MODE", "dev")
 SYS_ROOT = resolve_root(env_str("SYS_ROOT", "/var/www/shama-tech-backend"))
@@ -64,34 +75,84 @@ FRONTEND_ORIGINS = env_list(
     "FRONTEND_ORIGINS",
     "http://localhost:3000,http://localhost:5173,https://shama-tech.com,https://www.shama-tech.com",
 )
+
 ADMIN_API_KEY = env_str("ADMIN_API_KEY", "")
+
 CONTACT_MESSAGE_MAX = env_int("CONTACT_MESSAGE_MAX", 2000)
+
+CONTACT_EMAIL_ENABLED = env_int("CONTACT_EMAIL_ENABLED", 0)
+
+SMTP_HOST = env_str("SMTP_HOST", "")
+SMTP_PORT = env_int("SMTP_PORT", 587)
+SMTP_USER = env_str("SMTP_USER", "")
+SMTP_PASSWORD = env_str("SMTP_PASSWORD", "")
+SMTP_USE_TLS = env_int("SMTP_USE_TLS", 1)
+SMTP_FROM_EMAIL = env_str("SMTP_FROM_EMAIL", "")
+CONTACT_NOTIFY_EMAIL = env_str("CONTACT_NOTIFY_EMAIL", "")
+
 
 # Compatibility aliases used by existing server helpers.
 sys_mode = SYS_MODE
 sys_root = SYS_ROOT
 sys_url = SYS_URL
+
 hostname = DB_HOST
 username = DB_USER
 password = DB_PASSWORD
 database = DB_NAME
+
 frontend_origins = FRONTEND_ORIGINS
 admin_api_key = ADMIN_API_KEY
 contact_message_max = CONTACT_MESSAGE_MAX
+
+contact_email_enabled = CONTACT_EMAIL_ENABLED
+
+smtp_host = SMTP_HOST
+smtp_port = SMTP_PORT
+smtp_user = SMTP_USER
+smtp_password = SMTP_PASSWORD
+smtp_use_tls = SMTP_USE_TLS
+smtp_from_email = SMTP_FROM_EMAIL
+contact_notify_email = CONTACT_NOTIFY_EMAIL
 
 
 def check_prod_config():
     if SYS_MODE != "prod":
         return
+
     missing = []
+
     if DB_PASSWORD in ["", "rajasql", "change_me"]:
         missing.append("DB_PASSWORD")
+
     if ADMIN_API_KEY in ["", "change_me_to_a_long_random_value", "change_me"]:
         missing.append("ADMIN_API_KEY")
+
     if not FRONTEND_ORIGINS:
         missing.append("FRONTEND_ORIGINS")
+
     if SYS_URL in ["", "http://localhost", "localhost"]:
         missing.append("SYS_URL")
+
+    if CONTACT_EMAIL_ENABLED:
+        if SMTP_HOST == "":
+            missing.append("SMTP_HOST")
+
+        if SMTP_PORT == "":
+            missing.append("SMTP_PORT")
+
+        if SMTP_USER == "":
+            missing.append("SMTP_USER")
+
+        if SMTP_PASSWORD == "":
+            missing.append("SMTP_PASSWORD")
+
+        if SMTP_FROM_EMAIL == "":
+            missing.append("SMTP_FROM_EMAIL")
+
+        if CONTACT_NOTIFY_EMAIL == "":
+            missing.append("CONTACT_NOTIFY_EMAIL")
+
     if missing:
         raise RuntimeError("missing production config: " + ",".join(missing))
 

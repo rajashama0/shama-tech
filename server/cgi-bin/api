@@ -47,6 +47,36 @@ allow_origin = "*"
 if config is not None:
     allow_origin = cors_origin(config)
 
+
+# Contact protection before any CGI response headers.
+if os.environ.get("REQUEST_METHOD") == "POST":
+    from urllib.parse import parse_qs
+
+    meth = parse_qs(
+        os.environ.get("QUERY_STRING", "")
+    ).get("meth", [""])[0]
+
+    if meth == "api_contact_add":
+        import io
+        import json
+        from contact_guard import (
+            read_json_body,
+            guard_contact_request,
+            write_rejection,
+        )
+
+        body = read_json_body(os.environ, sys.stdin.buffer)
+        fields = body.get("input") if isinstance(body, dict) else None
+
+        rejection, cleaned = guard_contact_request(os.environ, fields)
+
+        if rejection is not None:
+            write_rejection(sys.stdout.buffer, rejection, os.environ)
+            raise SystemExit(0)
+
+        body["input"] = cleaned
+        sys.stdin = io.StringIO(json.dumps(body, ensure_ascii=False))
+
 print("Content-Type: application/json")
 print(f"Access-Control-Allow-Origin: {allow_origin}")
 print("Access-Control-Allow-Methods: POST, OPTIONS")
